@@ -1,1 +1,3 @@
 /venv/
+/tests/.pytest_cache/
+/config/keyfile.json

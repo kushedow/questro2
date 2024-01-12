@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <html lang="ru"><head><meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Questro</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/handlebars@latest/dist/handlebars.js"></script>
+    <script src="/assets/lariska.js"></script>
+    <link rel="stylesheet" type="text/css" href="/assets/style.css" />
+    <script>
+    var store = {
+      app_state: "loading",
+      player_uid: null,
+      game: {},
+      game_uid: null,
+      categories: ["Знакомство", "Свидание", "Про ценности", "Про кино"],
+      questions: {},
+      current_question: "",
+      is_connected: false,
+      is_my_turn: false
+    };
+    app_pages = {
+        standby:  {},
+        showmenu: {},
+        categories: {},
+        showcode: {},
+        joingame: {},
+
+        pickquestion: {},
+        showquestion: {},
+        waitforanswer: {}
+      }
+
+    document.addEventListener('DOMContentLoaded', function () {
+
+        app = new Lariska({
+          store: store,
+          container: "#app",
+          pages: app_pages,
+          url: window.location.hostname
+        });
+
+        // договорились отправлять ид игрока в каждом запросе
+        app.addPayload("player_uid")
+        app.addPayload("game_uid")
+
+        //  Переходим к стартовой странице
+        app.go("standby");
+
+        // обрабатываем подключение
+        app.on("connect", "#standby", () => {  console.log('connected') })
+
+        // обрабатываем отключение
+        app.on("disconnect", "#disconnected", () => { console.log('disconnected') })
+
+        // просим сервер создать нам игрока
+        app.emit("server/player/create")
+
+        // при получении игрока – сохраняем полученного игрока
+        app.on("client/player/created", null, (data)=>{
+           app.store.player_uid = data["uid"];
+           console.log('Player created', data)
+        })
+
+        // при получении списка категорий – сохраняем данные и переходим к списку категорий
+        app.on("client/categories/list", "#categories" , (data)=>{
+            app.store.categories = data
+        })
+
+        // обрабатываем ошибки
+        app.on("client/error", null, (data) => {alert(data.message)} )
+
+        app.on("client/game/updated", null, (data) => {
+           app.store.game = data
+           app.store.game_uid = data["uid"]
+           console.log("game updated", data)
+
+           if (app.store.game.status == "picking") {
+              if (app.store.game.current_player_uid == app.store.player_uid) {
+                 app.emit("server/questions/list")
+                 app.go("pickquestion")
+              }else {
+                 app.go("waitforanswer")
+              }
+           }
+
+           if (app.store.game.status == "waiting") {
+              app.go("showcode")
+           }
+
+           if (app.store.game.status == "answering") {
+              if (app.store.game.current_player_uid == app.store.player_uid) {
+                 app.go("showquestion")
+              }else {
+                 app.go("waitforanswer")
+              }
+           }
+
+        })
+
+        app.on("client/questions/list", null, (questions) => {
+
+           console.log("Получены вопросы", questions)
+           app.store.questions = questions
+
+           if (app.store.game.current_player_uid == app.store.player_uid) {
+              app.go("pickquestion")
+           }else {
+                 app.go("waitforanswer")
+           }
+        })
+
+        app.addHandler("pickCategory", (data) => {
+            console.log("Выбрана категория " + data.code)
+            app.store.category_code = data.code
+            app.emit("server/game/create", {category: data.code, player_uid: app.store.player_uid })
+        })
+
+        app.addHandler("joinGame", () => {
+            code_to_join = document.querySelector("#code_to_join").value
+            app.emit("server/game/join", {code_to_join: code_to_join})
+        })
+
+        app.addHandler("showQuestions", () => {
+            console.log("Переходим к выбору вопросов")
+            app.emit("server/questions/list")
+        })
+
+        app.addHandler("pickQuestion", (question_pk) => {
+            console.log("Picked question", question_pk)
+            app.emit("server/questions/pick", {question_pk: question_pk} )
+        })
+    })
+    </script>
+</head>
+<body>
+    <main>
+        <div class="container">
+            <section class="screen active card" id="app">
+                Загружаем
+            </section>
+        </div>
+    </main>
+
+    <template id="standby" >
+      <h1 class="center">Questro</h1>
+        <p class="center mb">
+            Помогаем оживить общение, сломать лед, узнать друг друга лучше и найти общие темы
+        </p>
+        <div class="center">
+            <button class="block tappable mb" onclick="app.emit('server/categories/list')">Создать игру</button>
+            <button class="block tappable mb" onclick="app.go('joingame')">Присоединиться к игре</button>
+        </div>
+    </template>
+
+    <template id="categories" >
+      <a class="back-link" href="#" onclick="app.go('standby')" > назад</a>
+      <h1 class="center">Выберите категорию</h1>
+        <p class="center">
+            {{#each categories}}
+                <button class="block tappable mb" onclick="app.run(
+                    'pickCategory', {code: '{{this.code}}' }
+                );">
+                    {{this.title}}
+                </button>
+            {{/each}}
+        </p>
+    </template>
+
+    <template id="showcode" >
+      <a class="back-link" href="#" onclick="app.go('standby')" > назад</a>
+      <h1 class="center">Игра создана</h1>
+      <p class="center">Передайте код игрокам, с которыми хотите сыграть</p>
+      <p class="center">В игре сейчас {{game.players_count}}, статус игры {{game.status}}</p>
+      <p class="center">
+            {{game.code_to_join}}
+      </p>
+      <button class="block tappable" onclick="app.emit('server/game/start')"> Начать игру</button>
+    </template>
+
+    <template id="pickquestion">
+      <h1 class="center">Выберите вопрос</h1>
+         {{#each questions}}
+                <button class="block mb tappable" onclick="app.run('pickQuestion', {{this.pk}})">
+                    {{this.text}}
+                </button>
+        {{/each}}
+
+    </template>
+
+    <template id="showquestion" >
+      <h2 class="center">Вам вопрос:</h2>
+      <p class="center">{{game.current_question.text}}</p>
+      <button class="tappable block mb" onclick="app.run('showQuestions')">Отвечено, следующий!</button>
+    </template>
+
+    <template id="joingame" >
+      <a class="back-link" href="#" onclick="app.go('standby')" >назад</a>
+      <h1 class="center">Присоединиться к игре</h1>
+      <p class="center">Получите у создателя комнаты номер из 4 цифр и введите его</p>
+      <input class="input-large block mb" type="text" id="code_to_join">
+      <button class="tappable block mb" onclick="app.run('joinGame')">Присоединиться</button>
+    </template>
+
+    <template id="waitforanswer">
+        <h1>Ждите, пока другой игрок отвечает, скоро ваша очередь</h1>
+        <p class="center">{{game.current_question.text}}</p>
+    </template>
+
+    <template id="disconnected" >
+      <h1 class="center">Связь потеряна</h1>
+      <p class="center">Подождите немного или проверьте соединение с интернетом.
+          Когда соединение вернется, приложение перезапустится
+      </p>
+    </template>
+
+</body>
+</html>
