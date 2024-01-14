@@ -15,8 +15,8 @@ sio = socketio.Server(cors_allowed_origins="*", origins="*")
 app = socketio.WSGIApp(sio, static_files={
 
         # Разрешаем открывать главную
-        '/': {'content_type': 'text/html', 'filename': '../frontend/index.html'},
-        '/assets/': '../frontend/assets/',
+        '/': {'content_type': 'text/html', 'filename': 'frontend/index.html'},
+        '/assets/': 'frontend/assets/',
 
     },
 )
@@ -109,7 +109,7 @@ def socket_game_create(sid, data):
     # создаем игру
 
     player_uid = data.get("player_uid")
-    category_code = data.get("category")
+    category_code = data.get("category", "default")
 
     if player_uid is None:
         emit_error(sid, "Player not specified")
